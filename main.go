@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"strings"
@@ -139,10 +138,8 @@ func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJ
 					continue
 				}
 
+				body := pr.PostView.Post.URL.ValueOr("") + "\n\n" + pr.PostView.Post.Body.ValueOr("")
 				for i, reply := range cfg.Replies {
-					body := pr.PostView.Post.URL.ValueOr("") + "\n\n" + pr.PostView.Post.Body.ValueOr("")
-					fmt.Println(body)
-
 					re := compiledRegexes[reply.Regex]
 					if !re.MatchString(body) {
 						continue
