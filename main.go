@@ -145,7 +145,7 @@ func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJ
 						continue
 					}
 
-					log.Info("Matched comment body").
+					log.Info("Matched post body").
 						Int("reply-index", i).
 						Int("post-id", pr.PostView.Post.ID).
 						Send()
