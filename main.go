@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"strings"
@@ -139,12 +140,11 @@ func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJ
 				}
 
 				for i, reply := range cfg.Replies {
-					if !pr.PostView.Post.Body.IsValid() {
-						continue
-					}
+					body := pr.PostView.Post.URL.ValueOr("") + "\n\n" + pr.PostView.Post.Body.ValueOr("")
+					fmt.Println(body)
 
 					re := compiledRegexes[reply.Regex]
-					if !re.MatchString(pr.PostView.Post.Body.MustValue()) {
+					if !re.MatchString(body) {
 						continue
 					}
 
@@ -155,7 +155,7 @@ func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJ
 
 					job := replyJob{PostID: pr.PostView.Post.ID}
 
-					matches := re.FindAllStringSubmatch(pr.PostView.Post.Body.MustValue(), -1)
+					matches := re.FindAllStringSubmatch(body, -1)
 					job.Content, err = executeTmpl(compiledTmpls[reply.Regex], matches)
 					if err != nil {
 						log.Warn("Error while executing template").Err(err).Send()
