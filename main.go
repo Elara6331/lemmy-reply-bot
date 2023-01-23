@@ -60,8 +60,20 @@ func main() {
 	commentWorker(ctx, c, replyCh)
 }
 
+type itemType uint8
+
+const (
+	comment itemType = iota
+	post
+)
+
+type item struct {
+	Type itemType
+	ID   int
+}
+
 func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJob) {
-	repliedIDs := map[int]struct{}{}
+	repliedIDs := map[item]struct{}{}
 
 	repliedStore, err := os.Open("replied.bin")
 	if err == nil {
@@ -83,7 +95,7 @@ func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJ
 					continue
 				}
 
-				if _, ok := repliedIDs[cr.CommentView.Comment.ID]; ok {
+				if _, ok := repliedIDs[item{comment, cr.CommentView.Comment.ID}]; ok {
 					continue
 				}
 
@@ -99,7 +111,7 @@ func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJ
 						Send()
 
 					job := replyJob{
-						CommentID: cr.CommentView.Comment.ID,
+						CommentID: types.NewOptional(cr.CommentView.Comment.ID),
 						PostID:    cr.CommentView.Comment.PostID,
 					}
 
@@ -112,7 +124,47 @@ func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJ
 
 					replyCh <- job
 
-					repliedIDs[cr.CommentView.Comment.ID] = struct{}{}
+					repliedIDs[item{comment, cr.CommentView.Comment.ID}] = struct{}{}
+				}
+			} else if res.IsOneOf(types.UserOperationCRUDCreatePost, types.UserOperationCRUDEditPost) {
+				var pr types.PostResponse
+				err = lemmy.DecodeResponse(res.Data, &pr)
+				if err != nil {
+					log.Warn("Error while trying to decode comment").Err(err).Send()
+					continue
+				}
+
+				if _, ok := repliedIDs[item{post, pr.PostView.Post.ID}]; ok {
+					continue
+				}
+
+				for i, reply := range cfg.Replies {
+					if !pr.PostView.Post.Body.IsValid() {
+						continue
+					}
+
+					re := compiledRegexes[reply.Regex]
+					if !re.MatchString(pr.PostView.Post.Body.MustValue()) {
+						continue
+					}
+
+					log.Info("Matched comment body").
+						Int("reply-index", i).
+						Int("post-id", pr.PostView.Post.ID).
+						Send()
+
+					job := replyJob{PostID: pr.PostView.Post.ID}
+
+					matches := re.FindAllStringSubmatch(pr.PostView.Post.Body.MustValue(), -1)
+					job.Content, err = executeTmpl(compiledTmpls[reply.Regex], matches)
+					if err != nil {
+						log.Warn("Error while executing template").Err(err).Send()
+						continue
+					}
+
+					replyCh <- job
+
+					repliedIDs[item{post, pr.PostView.Post.ID}] = struct{}{}
 				}
 			}
 		case err := <-c.Errors():
@@ -137,7 +189,7 @@ func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJ
 
 type replyJob struct {
 	Content   string
-	CommentID int
+	CommentID types.Optional[int]
 	PostID    int
 }
 
@@ -147,7 +199,7 @@ func commentReplyWorker(ctx context.Context, c *lemmy.WSClient, ch <-chan replyJ
 		case reply := <-ch:
 			err := c.Request(types.UserOperationCRUDCreateComment, types.CreateComment{
 				PostID:   reply.PostID,
-				ParentID: types.NewOptional(reply.CommentID),
+				ParentID: reply.CommentID,
 				Content:  reply.Content,
 			})
 			if err != nil {
@@ -156,7 +208,7 @@ func commentReplyWorker(ctx context.Context, c *lemmy.WSClient, ch <-chan replyJ
 
 			log.Info("Created new comment").
 				Int("post-id", reply.PostID).
-				Int("parent-id", reply.CommentID).
+				Int("parent-id", reply.CommentID.ValueOr(-1)).
 				Send()
 		case <-ctx.Done():
 			return
