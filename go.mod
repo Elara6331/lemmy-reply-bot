@@ -9,7 +9,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.0.6
 	github.com/spf13/pflag v1.0.5
 	github.com/vmihailenco/msgpack/v5 v5.3.5
-	go.arsenm.dev/go-lemmy v0.16.8-0.20230109205406-c0aced05f0cd
+	go.arsenm.dev/go-lemmy v0.16.8-0.20230124211922-014be78baa78
 	go.arsenm.dev/logger v0.0.0-20230104225304-d706171ea6df
 	go.arsenm.dev/pcre v0.0.0-20220530205550-74594f6c8b0e
 )
