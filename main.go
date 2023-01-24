@@ -266,6 +266,11 @@ func joinAll(c *lemmy.WSClient) {
 	}
 }
 
+// toSubmatches converts matches coming from PCRE2 to a
+// submatch array used for the template
 func toSubmatches(s [][]string) []Submatches {
+	// Unfortunately, Go doesn't allow for this conversion
+	// even though the memory layout is identical and it's
+	// safe, so it is done using unsafe pointer magic
 	return *(*[]Submatches)(unsafe.Pointer(&s))
 }
