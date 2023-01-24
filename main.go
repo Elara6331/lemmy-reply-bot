@@ -7,6 +7,7 @@ import (
 	"strings"
 	"syscall"
 	"text/template"
+	"unsafe"
 
 	"github.com/spf13/pflag"
 	"github.com/vmihailenco/msgpack/v5"
@@ -14,6 +15,44 @@ import (
 	"go.arsenm.dev/go-lemmy/types"
 	"go.arsenm.dev/logger/log"
 )
+
+type itemType uint8
+
+const (
+	comment itemType = iota
+	post
+)
+
+type item struct {
+	Type itemType
+	ID   int
+}
+
+func (it itemType) String() string {
+	switch it {
+	case comment:
+		return "comment"
+	case post:
+		return "post"
+	default:
+		return "<unknown>"
+	}
+}
+
+type Submatches []string
+
+func (sm Submatches) Item(i int) string {
+	return sm[i]
+}
+
+type TmplContext struct {
+	Matches []Submatches
+	Type    itemType
+}
+
+func (tc TmplContext) Match(i, j int) string {
+	return tc.Matches[i][j]
+}
 
 func main() {
 	configPath := pflag.StringP("config", "c", "./lemmy-reply-bot.toml", "Path to the config file")
@@ -60,18 +99,6 @@ func main() {
 	commentWorker(ctx, c, replyCh)
 }
 
-type itemType uint8
-
-const (
-	comment itemType = iota
-	post
-)
-
-type item struct {
-	Type itemType
-	ID   int
-}
-
 func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJob) {
 	repliedIDs := map[item]struct{}{}
 
@@ -116,7 +143,10 @@ func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJ
 					}
 
 					matches := re.FindAllStringSubmatch(cr.CommentView.Comment.Content, -1)
-					job.Content, err = executeTmpl(compiledTmpls[reply.Regex], matches)
+					job.Content, err = executeTmpl(compiledTmpls[reply.Regex], TmplContext{
+						Matches: toSubmatches(matches),
+						Type:    comment,
+					})
 					if err != nil {
 						log.Warn("Error while executing template").Err(err).Send()
 						continue
@@ -153,7 +183,10 @@ func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJ
 					job := replyJob{PostID: pr.PostView.Post.ID}
 
 					matches := re.FindAllStringSubmatch(body, -1)
-					job.Content, err = executeTmpl(compiledTmpls[reply.Regex], matches)
+					job.Content, err = executeTmpl(compiledTmpls[reply.Regex], TmplContext{
+						Matches: toSubmatches(matches),
+						Type:    post,
+					})
 					if err != nil {
 						log.Warn("Error while executing template").Err(err).Send()
 						continue
@@ -213,9 +246,9 @@ func commentReplyWorker(ctx context.Context, c *lemmy.WSClient, ch <-chan replyJ
 	}
 }
 
-func executeTmpl(tmpl *template.Template, matches [][]string) (string, error) {
+func executeTmpl(tmpl *template.Template, tc TmplContext) (string, error) {
 	sb := &strings.Builder{}
-	err := tmpl.Execute(sb, matches)
+	err := tmpl.Execute(sb, tc)
 	return sb.String(), err
 }
 
@@ -231,4 +264,8 @@ func joinAll(c *lemmy.WSClient) {
 	if err != nil {
 		log.Fatal("Error joining WebSocket community context").Err(err).Send()
 	}
+}
+
+func toSubmatches(s [][]string) []Submatches {
+	return *(*[]Submatches)(unsafe.Pointer(&s))
 }

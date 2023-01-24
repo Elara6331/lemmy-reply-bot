@@ -77,7 +77,6 @@ func compileReplies(replies []Reply) error {
 
 		tmpl, err := template.
 			New(strconv.Itoa(i)).
-			Funcs(tmplFuncs).
 			Funcs(sprig.TxtFuncMap()).
 			Parse(reply.Msg)
 		if err != nil {
