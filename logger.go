@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"go.arsenm.dev/logger"
-	"go.arsenm.dev/logger/log"
+	"go.elara.ws/logger"
+	"go.elara.ws/logger/log"
 )
 
 func init() {

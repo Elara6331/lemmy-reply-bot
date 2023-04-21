@@ -11,9 +11,9 @@ import (
 
 	"github.com/spf13/pflag"
 	"github.com/vmihailenco/msgpack/v5"
-	"go.arsenm.dev/go-lemmy"
-	"go.arsenm.dev/go-lemmy/types"
-	"go.arsenm.dev/logger/log"
+	"go.elara.ws/go-lemmy"
+	"go.elara.ws/go-lemmy/types"
+	"go.elara.ws/logger/log"
 )
 
 type itemType uint8

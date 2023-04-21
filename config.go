@@ -8,8 +8,8 @@ import (
 
 	"github.com/Masterminds/sprig"
 	"github.com/pelletier/go-toml/v2"
-	"go.arsenm.dev/logger/log"
-	"go.arsenm.dev/pcre"
+	"go.elara.ws/logger/log"
+	"go.elara.ws/pcre"
 )
 
 type Config struct {

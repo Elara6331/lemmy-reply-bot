@@ -1,17 +1,17 @@
-module go.arsenm.dev/lemmy-reply-bot
+module go.elara.ws/lemmy-reply-bot
 
 go 1.19
 
-//replace go.arsenm.dev/go-lemmy => /home/arsen/Code/go-lemmy
+//replace go.elara.ws/go-lemmy => /home/arsen/Code/go-lemmy
 
 require (
 	github.com/Masterminds/sprig v2.22.0+incompatible
 	github.com/pelletier/go-toml/v2 v2.0.6
 	github.com/spf13/pflag v1.0.5
 	github.com/vmihailenco/msgpack/v5 v5.3.5
-	go.arsenm.dev/go-lemmy v0.17.0
-	go.arsenm.dev/logger v0.0.0-20230104225304-d706171ea6df
-	go.arsenm.dev/pcre v0.0.0-20220530205550-74594f6c8b0e
+	go.elara.ws/go-lemmy v0.17.2
+	go.elara.ws/logger v0.0.0-20230421022458-e80700db2090
+	go.elara.ws/pcre v0.0.0-20230421030233-daf2d2e6973f
 )
 
 require (
