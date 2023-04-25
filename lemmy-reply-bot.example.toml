@@ -7,6 +7,40 @@ password = "ExamplePassword123"
 
 # Replies to any message starting with "!!BOT_TEST" with everything
 # after "!!BOT_TEST"
+#
+# Example: !!BOT_TEST Hello, World
 [[reply]]
 regex = "!!BOT_TEST (.*)"
 msg = "{{.Match 0 1}}"
+
+
+# Returns archive links for URLs preceded with "!archive"
+#
+# Example: !archive https://https://gitea.elara.ws/Elara6331/lemmy-reply-bot
+[[reply]]
+regex = '!archive (https?)://([.\w\d]+\.[\w\d]{2,4}[\w\d?&=%/.-]*)'
+msg = '''
+Here are the archive links you requested:
+
+{{range $i, $match := .Matches}}
+{{if len $.Matches | ne 1}}Link {{add $i 1}}:{{end}}
+- [archive.vn](https://archive.vn/{{$match.Item 1}}://{{$match.Item 2}})
+- [archive.org](https://web.archive.org/web/{{$match.Item 1}}://{{$match.Item 2}})
+- [ghostarchive.org](https://ghostarchive.org/search?term={{$match.Item 1}}://{{$match.Item 2}})
+{{end}}
+'''
+# Returns invidious links for YouTube URLs
+#
+# Example: https://www.youtube.com/watch?v=2vPhySbRETM
+[[reply]]
+regex = 'https?://(?:(?:www|m)\.)?youtu(?:\.be/|be\.com/(?:watch\?v=|shorts/))([\w\d-]{11})[&?]?([\w\d?&=%/-]*)'
+msg = '''
+{{if len .Matches | eq 1}}A YouTube link was{{else}}YouTube links were{{end}} detected in your {{.Type}}. Here are links to the same {{if len .Matches | eq 1}}video{{else}}videos{{end}} on Invidious, which is a YouTube frontend that protects your privacy:
+
+{{range $i, $match := .Matches}}
+{{if len $.Matches | ne 1}}Link {{add $i 1}}:{{end}}
+- [yewtu.be](https://yewtu.be/watch?v={{$match.Item 1}}&{{$match.Item 2}})
+- [invidious.weblibre.org](https://invidious.weblibre.org/watch?v={{$match.Item 1}}&{{$match.Item 2}})
+- [inv.vern.cc](https://inv.vern.cc/watch?v={{$match.Item 1}}&{{$match.Item 2}})
+{{end}}
+'''
