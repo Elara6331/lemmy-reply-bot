@@ -122,6 +122,10 @@ func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJ
 					continue
 				}
 
+				if !cr.CommentView.Community.Local {
+					continue
+				}
+
 				if _, ok := repliedIDs[item{comment, cr.CommentView.Comment.ID}]; ok {
 					continue
 				}
@@ -161,6 +165,10 @@ func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJ
 				err = lemmy.DecodeResponse(res.Data, &pr)
 				if err != nil {
 					log.Warn("Error while trying to decode comment").Err(err).Send()
+					continue
+				}
+
+				if !pr.PostView.Community.Local {
 					continue
 				}
 
