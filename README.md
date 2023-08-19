@@ -1,6 +1,6 @@
 # Lemmy Reply Bot
 
-This project is a simple bot that replies to comments and posts on Lemmy. It uses Lemmy's WebSocket API to get notified of any new comments or posts, and sees if they match any regex configured in the config file. If it finds one that does, it replies with the message corresponding to that regex.
+This project is a simple bot that replies to comments and posts on Lemmy. It gets the newest posts and comments every 15 seconds, and sees if they match any regex configured in the config file. If it finds one that does, it replies with the message corresponding to that regex.
 
 ### Features
 
@@ -8,7 +8,6 @@ This project is a simple bot that replies to comments and posts on Lemmy. It use
 - Powerful PCRE2 regular expressions for detecting triggers
 - Ability to use regex capture groups in replies
 - Persistent duplicate reply prevention via a filesystem store
-- Uses event-based WebSocket API, which means near-instant replies and no rate limiting
 
 ### Configuration
 

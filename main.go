@@ -2,42 +2,22 @@ package main
 
 import (
 	"context"
-	"os"
+	"database/sql"
+	_ "embed"
 	"os/signal"
 	"strings"
 	"syscall"
 	"text/template"
+	"time"
 	"unsafe"
 
 	"github.com/spf13/pflag"
-	"github.com/vmihailenco/msgpack/v5"
 	"go.elara.ws/go-lemmy"
 	"go.elara.ws/go-lemmy/types"
+	"go.elara.ws/lemmy-reply-bot/internal/store"
 	"go.elara.ws/logger/log"
+	_ "modernc.org/sqlite"
 )
-
-type itemType uint8
-
-const (
-	comment itemType = iota
-	post
-)
-
-type item struct {
-	Type itemType
-	ID   int
-}
-
-func (it itemType) String() string {
-	switch it {
-	case comment:
-		return "comment"
-	case post:
-		return "post"
-	default:
-		return "<unknown>"
-	}
-}
 
 type Submatches []string
 
@@ -47,11 +27,29 @@ func (sm Submatches) Item(i int) string {
 
 type TmplContext struct {
 	Matches []Submatches
-	Type    itemType
+	Type    string
 }
 
 func (tc TmplContext) Match(i, j int) string {
 	return tc.Matches[i][j]
+}
+
+//go:embed sql/schema.sql
+var schema string
+
+func init() {
+	db, err := sql.Open("sqlite", "replied.db")
+	if err != nil {
+		log.Fatal("Error opening database during init").Err(err).Send()
+	}
+	_, err = db.Exec(schema)
+	if err != nil {
+		log.Fatal("Error initializing database").Err(err).Send()
+	}
+	err = db.Close()
+	if err != nil {
+		log.Fatal("Error closing database after init").Err(err).Send()
+	}
 }
 
 func main() {
@@ -68,7 +66,7 @@ func main() {
 		log.Fatal("Error loading config file").Err(err).Send()
 	}
 
-	c, err := lemmy.NewWebSocket(cfg.Lemmy.InstanceURL)
+	c, err := lemmy.New(cfg.Lemmy.InstanceURL)
 	if err != nil {
 		log.Fatal("Error creating new Lemmy API client").Err(err).Send()
 	}
@@ -83,13 +81,6 @@ func main() {
 
 	log.Info("Successfully logged in to Lemmy instance").Send()
 
-	joinAll(c)
-
-	c.OnReconnect(func(c *lemmy.WSClient) {
-		joinAll(c)
-		log.Info("Successfully reconnected to WebSocket").Send()
-	})
-
 	replyCh := make(chan replyJob, 200)
 
 	if !*dryRun {
@@ -99,57 +90,64 @@ func main() {
 	commentWorker(ctx, c, replyCh)
 }
 
-func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJob) {
-	repliedIDs := map[item]struct{}{}
-
-	repliedStore, err := os.Open("replied.bin")
-	if err == nil {
-		err = msgpack.NewDecoder(repliedStore).Decode(&repliedIDs)
-		if err != nil {
-			log.Warn("Error decoding reply store").Err(err).Send()
-		}
-		repliedStore.Close()
+func commentWorker(ctx context.Context, c *lemmy.Client, replyCh chan<- replyJob) {
+	db, err := sql.Open("sqlite", "replied.db")
+	if err != nil {
+		log.Fatal("Error opening reply database").Err(err).Send()
 	}
+	rs := store.New(db)
 
 	for {
 		select {
-		case res := <-c.Responses():
-			if res.IsOneOf(types.UserOperationCRUDCreateComment, types.UserOperationCRUDEditComment) {
-				var cr types.CommentResponse
-				err = lemmy.DecodeResponse(res.Data, &cr)
-				if err != nil {
-					log.Warn("Error while trying to decode comment").Err(err).Send()
+		case <-time.After(15 * time.Second):
+			comments, err := c.Comments(ctx, types.GetComments{
+				Type:  types.NewOptional(types.ListingTypeLocal),
+				Sort:  types.NewOptional(types.CommentSortTypeNew),
+				Limit: types.NewOptional[int64](50),
+			})
+			if err != nil {
+				log.Warn("Error getting comments").Err(err).Send()
+				continue
+			}
+
+			for _, c := range comments.Comments {
+				// Skip all non-local comments
+				if !c.Community.Local {
 					continue
 				}
 
-				if !cr.CommentView.Community.Local {
+				// If the item we're checking for already exists, we've already replied, so skip it
+				if c, err := rs.ItemExists(ctx, store.ItemExistsParams{
+					ID:          int64(c.Comment.ID),
+					ItemType:    store.Comment,
+					UpdatedTime: c.Comment.Updated.Unix(),
+				}); c > 0 && err == nil {
 					continue
-				}
-
-				if _, ok := repliedIDs[item{comment, cr.CommentView.Comment.ID}]; ok {
+				} else if err != nil {
+					log.Warn("Error checking if item exists").Err(err).Send()
 					continue
 				}
 
 				for i, reply := range cfg.Replies {
 					re := compiledRegexes[reply.Regex]
-					if !re.MatchString(cr.CommentView.Comment.Content) {
+					if !re.MatchString(c.Comment.Content) {
 						continue
 					}
 
 					log.Info("Matched comment body").
 						Int("reply-index", i).
-						Int("comment-id", cr.CommentView.Comment.ID).
+						Int("comment-id", c.Comment.ID).
 						Send()
 
 					job := replyJob{
-						CommentID: types.NewOptional(cr.CommentView.Comment.ID),
-						PostID:    cr.CommentView.Comment.PostID,
+						CommentID: types.NewOptional(c.Comment.ID),
+						PostID:    c.Comment.PostID,
 					}
 
-					matches := re.FindAllStringSubmatch(cr.CommentView.Comment.Content, -1)
+					matches := re.FindAllStringSubmatch(c.Comment.Content, -1)
 					job.Content, err = executeTmpl(compiledTmpls[reply.Regex], TmplContext{
 						Matches: toSubmatches(matches),
-						Type:    comment,
+						Type:    "comment",
 					})
 					if err != nil {
 						log.Warn("Error while executing template").Err(err).Send()
@@ -158,25 +156,47 @@ func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJ
 
 					replyCh <- job
 
-					repliedIDs[item{comment, cr.CommentView.Comment.ID}] = struct{}{}
+					err = rs.AddItem(ctx, store.AddItemParams{
+						ID:          int64(c.Comment.ID),
+						ItemType:    store.Comment,
+						UpdatedTime: c.Comment.Updated.Unix(),
+					})
+					if err != nil {
+						log.Warn("Error adding comment to the reply store").Err(err).Send()
+						continue
+					}
 				}
-			} else if res.IsOneOf(types.UserOperationCRUDCreatePost, types.UserOperationCRUDEditPost) {
-				var pr types.PostResponse
-				err = lemmy.DecodeResponse(res.Data, &pr)
-				if err != nil {
-					log.Warn("Error while trying to decode comment").Err(err).Send()
+			}
+
+			posts, err := c.Posts(ctx, types.GetPosts{
+				Type:  types.NewOptional(types.ListingTypeLocal),
+				Sort:  types.NewOptional(types.SortTypeNew),
+				Limit: types.NewOptional[int64](20),
+			})
+			if err != nil {
+				log.Warn("Error getting comments").Err(err).Send()
+				continue
+			}
+
+			for _, p := range posts.Posts {
+				// Skip all non-local posts
+				if !p.Community.Local {
 					continue
 				}
 
-				if !pr.PostView.Community.Local {
+				// If the item we're checking for already exists, we've already replied, so skip it
+				if c, err := rs.ItemExists(ctx, store.ItemExistsParams{
+					ID:          int64(p.Post.ID),
+					ItemType:    store.Post,
+					UpdatedTime: p.Post.Updated.Unix(),
+				}); c > 0 && err == nil {
+					continue
+				} else if err != nil {
+					log.Warn("Error checking if item exists").Err(err).Send()
 					continue
 				}
 
-				if _, ok := repliedIDs[item{post, pr.PostView.Post.ID}]; ok {
-					continue
-				}
-
-				body := pr.PostView.Post.URL.ValueOr("") + "\n\n" + pr.PostView.Post.Body.ValueOr("")
+				body := p.Post.URL.ValueOr("") + "\n\n" + p.Post.Body.ValueOr("")
 				for i, reply := range cfg.Replies {
 					re := compiledRegexes[reply.Regex]
 					if !re.MatchString(body) {
@@ -185,15 +205,15 @@ func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJ
 
 					log.Info("Matched post body").
 						Int("reply-index", i).
-						Int("post-id", pr.PostView.Post.ID).
+						Int("post-id", p.Post.ID).
 						Send()
 
-					job := replyJob{PostID: pr.PostView.Post.ID}
+					job := replyJob{PostID: p.Post.ID}
 
 					matches := re.FindAllStringSubmatch(body, -1)
 					job.Content, err = executeTmpl(compiledTmpls[reply.Regex], TmplContext{
 						Matches: toSubmatches(matches),
-						Type:    post,
+						Type:    "post",
 					})
 					if err != nil {
 						log.Warn("Error while executing template").Err(err).Send()
@@ -202,24 +222,23 @@ func commentWorker(ctx context.Context, c *lemmy.WSClient, replyCh chan<- replyJ
 
 					replyCh <- job
 
-					repliedIDs[item{post, pr.PostView.Post.ID}] = struct{}{}
+					err = rs.AddItem(ctx, store.AddItemParams{
+						ID:          int64(p.Post.ID),
+						ItemType:    store.Post,
+						UpdatedTime: p.Post.Updated.Unix(),
+					})
+					if err != nil {
+						log.Warn("Error adding post to the reply store").Err(err).Send()
+						continue
+					}
 				}
 			}
-		case err := <-c.Errors():
-			log.Warn("Lemmy client error").Err(err).Send()
 		case <-ctx.Done():
-			repliedStore, err := os.Create("replied.bin")
+			err = db.Close()
 			if err != nil {
-				log.Warn("Error creating reply store file").Err(err).Send()
-				return
+				log.Warn("Error closing database").Err(err).Send()
+				continue
 			}
-
-			err = msgpack.NewEncoder(repliedStore).Encode(repliedIDs)
-			if err != nil {
-				log.Warn("Error encoding replies to reply store").Err(err).Send()
-			}
-
-			repliedStore.Close()
 			return
 		}
 	}
@@ -231,11 +250,11 @@ type replyJob struct {
 	PostID    int
 }
 
-func commentReplyWorker(ctx context.Context, c *lemmy.WSClient, ch <-chan replyJob) {
+func commentReplyWorker(ctx context.Context, c *lemmy.Client, ch <-chan replyJob) {
 	for {
 		select {
 		case reply := <-ch:
-			err := c.Request(types.UserOperationCRUDCreateComment, types.CreateComment{
+			cr, err := c.CreateComment(ctx, types.CreateComment{
 				PostID:   reply.PostID,
 				ParentID: reply.CommentID,
 				Content:  reply.Content,
@@ -247,6 +266,7 @@ func commentReplyWorker(ctx context.Context, c *lemmy.WSClient, ch <-chan replyJ
 			log.Info("Created new comment").
 				Int("post-id", reply.PostID).
 				Int("parent-id", reply.CommentID.ValueOr(-1)).
+				Int("comment-id", cr.CommentView.Comment.ID).
 				Send()
 		case <-ctx.Done():
 			return
@@ -258,20 +278,6 @@ func executeTmpl(tmpl *template.Template, tc TmplContext) (string, error) {
 	sb := &strings.Builder{}
 	err := tmpl.Execute(sb, tc)
 	return sb.String(), err
-}
-
-func joinAll(c *lemmy.WSClient) {
-	err := c.Request(types.UserOperationUserJoin, nil)
-	if err != nil {
-		log.Fatal("Error joining WebSocket user context").Err(err).Send()
-	}
-
-	err = c.Request(types.UserOperationCommunityJoin, types.CommunityJoin{
-		CommunityID: 0,
-	})
-	if err != nil {
-		log.Fatal("Error joining WebSocket community context").Err(err).Send()
-	}
 }
 
 // toSubmatches converts matches coming from PCRE2 to a
