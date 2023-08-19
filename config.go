@@ -12,7 +12,7 @@ import (
 	"go.elara.ws/pcre"
 )
 
-type Config struct {
+type ConfigFile struct {
 	Lemmy struct {
 		InstanceURL string `toml:"instanceURL"`
 		Account     struct {
@@ -28,16 +28,16 @@ type Reply struct {
 	Msg   string `toml:"msg"`
 }
 
-var (
-	cfg             = Config{}
-	compiledRegexes = map[string]*pcre.Regexp{}
-	compiledTmpls   = map[string]*template.Template{}
-)
+type Config struct {
+	ConfigFile *ConfigFile
+	Regexes    map[string]*pcre.Regexp
+	Tmpls      map[string]*template.Template
+}
 
-func loadConfig(path string) error {
+func loadConfig(path string) (Config, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
-		return err
+		return Config{}, err
 	}
 
 	if fi.Mode().Perm() != 0o600 {
@@ -46,24 +46,29 @@ func loadConfig(path string) error {
 
 	fl, err := os.Open(path)
 	if err != nil {
-		return err
+		return Config{}, err
 	}
 
-	err = toml.NewDecoder(fl).Decode(&cfg)
+	cfgFile := &ConfigFile{}
+	err = toml.NewDecoder(fl).Decode(cfgFile)
 	if err != nil {
-		return err
+		return Config{}, err
 	}
 
-	err = compileReplies(cfg.Replies)
+	compiledRegexes, compiledTmpls, err := compileReplies(cfgFile.Replies)
 	if err != nil {
-		return err
+		return Config{}, err
 	}
 
-	validateConfig()
-	return nil
+	cfg := Config{cfgFile, compiledRegexes, compiledTmpls}
+	validateConfig(cfg)
+	return cfg, nil
 }
 
-func compileReplies(replies []Reply) error {
+func compileReplies(replies []Reply) (map[string]*pcre.Regexp, map[string]*template.Template, error) {
+	compiledRegexes := map[string]*pcre.Regexp{}
+	compiledTmpls := map[string]*template.Template{}
+
 	for i, reply := range replies {
 		if _, ok := compiledRegexes[reply.Regex]; ok {
 			continue
@@ -71,7 +76,7 @@ func compileReplies(replies []Reply) error {
 
 		re, err := pcre.Compile(reply.Regex)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		compiledRegexes[reply.Regex] = re
 
@@ -80,21 +85,22 @@ func compileReplies(replies []Reply) error {
 			Funcs(sprig.TxtFuncMap()).
 			Parse(reply.Msg)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		compiledTmpls[reply.Regex] = tmpl
 	}
-	return nil
+
+	return compiledRegexes, compiledTmpls, nil
 }
 
-func validateConfig() {
-	_, err := url.Parse(cfg.Lemmy.InstanceURL)
+func validateConfig(cfg Config) {
+	_, err := url.Parse(cfg.ConfigFile.Lemmy.InstanceURL)
 	if err != nil {
 		log.Fatal("Lemmy instance URL is not valid").Err(err).Send()
 	}
 
-	for i, reply := range cfg.Replies {
-		re := compiledRegexes[reply.Regex]
+	for i, reply := range cfg.ConfigFile.Replies {
+		re := cfg.Regexes[reply.Regex]
 
 		if re.MatchString(reply.Msg) {
 			log.Fatal("Regular expression matches message. This may create an infinite loop. Refusing to start.").Int("reply-index", i).Send()

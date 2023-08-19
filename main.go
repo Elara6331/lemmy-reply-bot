@@ -19,21 +19,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type Submatches []string
-
-func (sm Submatches) Item(i int) string {
-	return sm[i]
-}
-
-type TmplContext struct {
-	Matches []Submatches
-	Type    string
-}
-
-func (tc TmplContext) Match(i, j int) string {
-	return tc.Matches[i][j]
-}
-
 //go:embed sql/schema.sql
 var schema string
 
@@ -61,19 +46,19 @@ func main() {
 	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	err := loadConfig(*configPath)
+	cfg, err := loadConfig(*configPath)
 	if err != nil {
 		log.Fatal("Error loading config file").Err(err).Send()
 	}
 
-	c, err := lemmy.New(cfg.Lemmy.InstanceURL)
+	c, err := lemmy.New(cfg.ConfigFile.Lemmy.InstanceURL)
 	if err != nil {
 		log.Fatal("Error creating new Lemmy API client").Err(err).Send()
 	}
 
 	err = c.ClientLogin(ctx, types.Login{
-		UsernameOrEmail: cfg.Lemmy.Account.UserOrEmail,
-		Password:        cfg.Lemmy.Account.Password,
+		UsernameOrEmail: cfg.ConfigFile.Lemmy.Account.UserOrEmail,
+		Password:        cfg.ConfigFile.Lemmy.Account.Password,
 	})
 	if err != nil {
 		log.Fatal("Error logging in to Lemmy instance").Err(err).Send()
@@ -87,10 +72,10 @@ func main() {
 		go commentReplyWorker(ctx, c, replyCh)
 	}
 
-	commentWorker(ctx, c, replyCh)
+	commentWorker(ctx, c, cfg, replyCh)
 }
 
-func commentWorker(ctx context.Context, c *lemmy.Client, replyCh chan<- replyJob) {
+func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, replyCh chan<- replyJob) {
 	db, err := sql.Open("sqlite", "replied.db")
 	if err != nil {
 		log.Fatal("Error opening reply database").Err(err).Send()
@@ -128,8 +113,8 @@ func commentWorker(ctx context.Context, c *lemmy.Client, replyCh chan<- replyJob
 					continue
 				}
 
-				for i, reply := range cfg.Replies {
-					re := compiledRegexes[reply.Regex]
+				for i, reply := range cfg.ConfigFile.Replies {
+					re := cfg.Regexes[reply.Regex]
 					if !re.MatchString(c.Comment.Content) {
 						continue
 					}
@@ -145,7 +130,7 @@ func commentWorker(ctx context.Context, c *lemmy.Client, replyCh chan<- replyJob
 					}
 
 					matches := re.FindAllStringSubmatch(c.Comment.Content, -1)
-					job.Content, err = executeTmpl(compiledTmpls[reply.Regex], TmplContext{
+					job.Content, err = executeTmpl(cfg.Tmpls[reply.Regex], TmplContext{
 						Matches: toSubmatches(matches),
 						Type:    "comment",
 					})
@@ -197,8 +182,8 @@ func commentWorker(ctx context.Context, c *lemmy.Client, replyCh chan<- replyJob
 				}
 
 				body := p.Post.URL.ValueOr("") + "\n\n" + p.Post.Body.ValueOr("")
-				for i, reply := range cfg.Replies {
-					re := compiledRegexes[reply.Regex]
+				for i, reply := range cfg.ConfigFile.Replies {
+					re := cfg.Regexes[reply.Regex]
 					if !re.MatchString(body) {
 						continue
 					}
@@ -211,7 +196,7 @@ func commentWorker(ctx context.Context, c *lemmy.Client, replyCh chan<- replyJob
 					job := replyJob{PostID: p.Post.ID}
 
 					matches := re.FindAllStringSubmatch(body, -1)
-					job.Content, err = executeTmpl(compiledTmpls[reply.Regex], TmplContext{
+					job.Content, err = executeTmpl(cfg.Tmpls[reply.Regex], TmplContext{
 						Matches: toSubmatches(matches),
 						Type:    "post",
 					})
