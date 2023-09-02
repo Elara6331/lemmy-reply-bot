@@ -281,14 +281,24 @@ func commentReplyWorker(ctx context.Context, c *lemmy.Client, rs *store.Queries,
 		select {
 		case reply := <-ch:
 			// If the edit ID is set
-			if reply.EditID != 0 {
+			if reply.EditID > 0 {
 				// Edit the comment with the specified ID with the new content
 				cr, err := c.EditComment(ctx, types.EditComment{
 					CommentID: reply.EditID,
 					Content:   types.NewOptional(reply.Content),
 				})
 				if err != nil {
-					log.Warn("Error while trying to create new comment").Err(err).Send()
+					log.Warn("Error while trying to edit comment").Err(err).Send()
+				}
+
+				// Set the reply ID for the post/comment in the database
+				// so that we know which comment ID to edit if we need to.
+				err = rs.SetReplyID(ctx, store.SetReplyIDParams{
+					ID:      int64(reply.CommentID.ValueOr(reply.PostID)),
+					ReplyID: int64(cr.CommentView.Comment.ID),
+				})
+				if err != nil {
+					log.Warn("Error setting the reply ID of the new comment").Err(err).Send()
 				}
 
 				log.Info("Edited comment").
