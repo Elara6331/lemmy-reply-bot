@@ -1,14 +1,15 @@
 module go.elara.ws/lemmy-reply-bot
 
-go 1.19
+go 1.21.0
 
-//replace go.elara.ws/go-lemmy => /home/arsen/Code/go-lemmy
+//replace go.elara.ws/go-lemmy => /home/elara/Code/go-lemmy
 
 require (
 	github.com/Masterminds/sprig v2.22.0+incompatible
+	github.com/jarcoal/httpmock v1.3.1
 	github.com/pelletier/go-toml/v2 v2.0.6
 	github.com/spf13/pflag v1.0.5
-	go.elara.ws/go-lemmy v0.18.0
+	go.elara.ws/go-lemmy v0.18.1-0.20230902225105-9f4bae88f2fe
 	go.elara.ws/logger v0.0.0-20230421022458-e80700db2090
 	go.elara.ws/pcre v0.0.0-20230805032557-4ce849193f64
 	modernc.org/sqlite v1.25.0

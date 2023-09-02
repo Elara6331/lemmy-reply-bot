@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"errors"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -19,22 +20,19 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+//go:generate sqlc generate
+
 //go:embed sql/schema.sql
 var schema string
 
-func init() {
-	db, err := sql.Open("sqlite", "replied.db")
+func openDB(path string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
-		log.Fatal("Error opening database during init").Err(err).Send()
+		return nil, err
 	}
+	db.SetMaxOpenConns(1)
 	_, err = db.Exec(schema)
-	if err != nil {
-		log.Fatal("Error initializing database").Err(err).Send()
-	}
-	err = db.Close()
-	if err != nil {
-		log.Fatal("Error closing database after init").Err(err).Send()
-	}
+	return db, err
 }
 
 func main() {
@@ -50,6 +48,13 @@ func main() {
 	if err != nil {
 		log.Fatal("Error loading config file").Err(err).Send()
 	}
+
+	db, err := openDB("replied.db")
+	if err != nil {
+		log.Fatal("Error opening reply database").Err(err).Send()
+	}
+	defer db.Close()
+	rs := store.New(db)
 
 	c, err := lemmy.New(cfg.ConfigFile.Lemmy.InstanceURL)
 	if err != nil {
@@ -69,22 +74,19 @@ func main() {
 	replyCh := make(chan replyJob, 200)
 
 	if !*dryRun {
-		go commentReplyWorker(ctx, c, replyCh)
+		// Start the reply worker in the background
+		go commentReplyWorker(ctx, c, rs, replyCh)
 	}
 
-	commentWorker(ctx, c, cfg, replyCh)
+	// Start the comment worker
+	commentWorker(ctx, c, cfg, rs, replyCh)
 }
 
-func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, replyCh chan<- replyJob) {
-	db, err := sql.Open("sqlite", "replied.db")
-	if err != nil {
-		log.Fatal("Error opening reply database").Err(err).Send()
-	}
-	rs := store.New(db)
-
+func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, rs *store.Queries, replyCh chan<- replyJob) {
 	for {
 		select {
-		case <-time.After(15 * time.Second):
+		case <-time.After(cfg.PollInterval):
+			// Get 50 of the newest comments from Lemmy
 			comments, err := c.Comments(ctx, types.GetComments{
 				Type:  types.NewOptional(types.ListingTypeLocal),
 				Sort:  types.NewOptional(types.CommentSortTypeNew),
@@ -101,16 +103,28 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, replyCh cha
 					continue
 				}
 
-				// If the item we're checking for already exists, we've already replied, so skip it
-				if c, err := rs.ItemExists(ctx, store.ItemExistsParams{
-					ID:          int64(c.Comment.ID),
-					ItemType:    store.Comment,
-					UpdatedTime: c.Comment.Updated.Unix(),
-				}); c > 0 && err == nil {
-					continue
+				edit := false
+
+				// Try to get comment item from the database
+				item, err := rs.GetItem(ctx, store.GetItemParams{
+					ID:       int64(c.Comment.ID),
+					ItemType: store.Comment,
+				})
+				if errors.Is(err, sql.ErrNoRows) {
+					// If the item doesn't exist, we need to reply to it,
+					// so don't continue or set edit
 				} else if err != nil {
 					log.Warn("Error checking if item exists").Err(err).Send()
 					continue
+				} else if item.UpdatedTime == c.Comment.Updated.Unix() {
+					// If the item we're checking for exists and hasn't been edited,
+					// we've already replied, so skip it
+					continue
+				} else if item.UpdatedTime != c.Comment.Updated.Unix() {
+					// If the item exists but has been edited since we replied,
+					// set edit to true so we know to edit it instead of making
+					// a new comment
+					edit = true
 				}
 
 				for i, reply := range cfg.ConfigFile.Replies {
@@ -129,6 +143,13 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, replyCh cha
 						PostID:    c.Comment.PostID,
 					}
 
+					// If edit is set to true, we need to edit the comment,
+					// so set the job's EditID so the reply worker knows which
+					// comment to edit
+					if edit {
+						job.EditID = int(item.ReplyID)
+					}
+
 					matches := re.FindAllStringSubmatch(c.Comment.Content, -1)
 					job.Content, err = executeTmpl(cfg.Tmpls[reply.Regex], TmplContext{
 						Matches: toSubmatches(matches),
@@ -141,6 +162,8 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, replyCh cha
 
 					replyCh <- job
 
+					// Add the reply to the database so we don't reply to it
+					// again if we encounter it again
 					err = rs.AddItem(ctx, store.AddItemParams{
 						ID:          int64(c.Comment.ID),
 						ItemType:    store.Comment,
@@ -153,6 +176,7 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, replyCh cha
 				}
 			}
 
+			// Get 20 of the newest posts from Lemmy
 			posts, err := c.Posts(ctx, types.GetPosts{
 				Type:  types.NewOptional(types.ListingTypeLocal),
 				Sort:  types.NewOptional(types.SortTypeNew),
@@ -169,16 +193,28 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, replyCh cha
 					continue
 				}
 
-				// If the item we're checking for already exists, we've already replied, so skip it
-				if c, err := rs.ItemExists(ctx, store.ItemExistsParams{
-					ID:          int64(p.Post.ID),
-					ItemType:    store.Post,
-					UpdatedTime: p.Post.Updated.Unix(),
-				}); c > 0 && err == nil {
-					continue
+				edit := false
+
+				// Try to get post item from the database
+				item, err := rs.GetItem(ctx, store.GetItemParams{
+					ID:       int64(p.Post.ID),
+					ItemType: store.Post,
+				})
+				if errors.Is(err, sql.ErrNoRows) {
+					// If the item doesn't exist, we need to reply to it,
+					// so don't continue or set edit
 				} else if err != nil {
 					log.Warn("Error checking if item exists").Err(err).Send()
 					continue
+				} else if item.UpdatedTime == p.Post.Updated.Unix() {
+					// If the item we're checking for exists and hasn't been edited,
+					// we've already replied, so skip it
+					continue
+				} else if item.UpdatedTime != p.Post.Updated.Unix() {
+					// If the item exists but has been edited since we replied,
+					// set edit to true so we know to edit it instead of making
+					// a new comment
+					edit = true
 				}
 
 				body := p.Post.URL.ValueOr("") + "\n\n" + p.Post.Body.ValueOr("")
@@ -195,6 +231,13 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, replyCh cha
 
 					job := replyJob{PostID: p.Post.ID}
 
+					// If edit is set to true, we need to edit the comment,
+					// so set the job's EditID so the reply worker knows which
+					// comment to edit
+					if edit {
+						job.EditID = int(item.ReplyID)
+					}
+
 					matches := re.FindAllStringSubmatch(body, -1)
 					job.Content, err = executeTmpl(cfg.Tmpls[reply.Regex], TmplContext{
 						Matches: toSubmatches(matches),
@@ -207,6 +250,8 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, replyCh cha
 
 					replyCh <- job
 
+					// Add the reply to the database so we don't reply to it
+					// again if we encounter it again
 					err = rs.AddItem(ctx, store.AddItemParams{
 						ID:          int64(p.Post.ID),
 						ItemType:    store.Post,
@@ -219,11 +264,6 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, replyCh cha
 				}
 			}
 		case <-ctx.Done():
-			err = db.Close()
-			if err != nil {
-				log.Warn("Error closing database").Err(err).Send()
-				continue
-			}
 			return
 		}
 	}
@@ -232,27 +272,55 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, replyCh cha
 type replyJob struct {
 	Content   string
 	CommentID types.Optional[int]
+	EditID    int
 	PostID    int
 }
 
-func commentReplyWorker(ctx context.Context, c *lemmy.Client, ch <-chan replyJob) {
+func commentReplyWorker(ctx context.Context, c *lemmy.Client, rs *store.Queries, ch <-chan replyJob) {
 	for {
 		select {
 		case reply := <-ch:
-			cr, err := c.CreateComment(ctx, types.CreateComment{
-				PostID:   reply.PostID,
-				ParentID: reply.CommentID,
-				Content:  reply.Content,
-			})
-			if err != nil {
-				log.Warn("Error while trying to create new comment").Err(err).Send()
-			}
+			// If the edit ID is set
+			if reply.EditID != 0 {
+				// Edit the comment with the specified ID with the new content
+				cr, err := c.EditComment(ctx, types.EditComment{
+					CommentID: reply.EditID,
+					Content:   types.NewOptional(reply.Content),
+				})
+				if err != nil {
+					log.Warn("Error while trying to create new comment").Err(err).Send()
+				}
 
-			log.Info("Created new comment").
-				Int("post-id", reply.PostID).
-				Int("parent-id", reply.CommentID.ValueOr(-1)).
-				Int("comment-id", cr.CommentView.Comment.ID).
-				Send()
+				log.Info("Edited comment").
+					Int("comment-id", cr.CommentView.Comment.ID).
+					Send()
+			} else {
+				// Create a new comment replying to a post/comment
+				cr, err := c.CreateComment(ctx, types.CreateComment{
+					PostID:   reply.PostID,
+					ParentID: reply.CommentID,
+					Content:  reply.Content,
+				})
+				if err != nil {
+					log.Warn("Error while trying to create new comment").Err(err).Send()
+				}
+
+				// Set the reply ID for the post/comment in the database
+				// so that we know which comment ID to edit if we need to.
+				err = rs.SetReplyID(ctx, store.SetReplyIDParams{
+					ID:      int64(reply.CommentID.ValueOr(reply.PostID)),
+					ReplyID: int64(cr.CommentView.Comment.ID),
+				})
+				if err != nil {
+					log.Warn("Error setting the reply ID of the new comment").Err(err).Send()
+				}
+
+				log.Info("Created new comment").
+					Int("post-id", reply.PostID).
+					Int("parent-id", reply.CommentID.ValueOr(-1)).
+					Int("comment-id", cr.CommentView.Comment.ID).
+					Send()
+			}
 		case <-ctx.Done():
 			return
 		}

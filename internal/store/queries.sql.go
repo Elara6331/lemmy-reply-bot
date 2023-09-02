@@ -10,7 +10,7 @@ import (
 )
 
 const addItem = `-- name: AddItem :exec
-INSERT OR REPLACE INTO replied_items (id, item_type, updated_time) VALUES (?, ?, ?)
+INSERT OR REPLACE INTO replied_items (id, reply_id, item_type, updated_time) VALUES (?, -1, ?, ?)
 `
 
 type AddItemParams struct {
@@ -24,19 +24,37 @@ func (q *Queries) AddItem(ctx context.Context, arg AddItemParams) error {
 	return err
 }
 
-const itemExists = `-- name: ItemExists :one
-SELECT COUNT(1) FROM replied_items WHERE item_type = ? AND id = ? AND updated_time = ?
+const getItem = `-- name: GetItem :one
+SELECT id, reply_id, item_type, updated_time FROM replied_items WHERE item_type = ? AND id = ? LIMIT 1
 `
 
-type ItemExistsParams struct {
-	ItemType    string
-	ID          int64
-	UpdatedTime int64
+type GetItemParams struct {
+	ItemType string
+	ID       int64
 }
 
-func (q *Queries) ItemExists(ctx context.Context, arg ItemExistsParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, itemExists, arg.ItemType, arg.ID, arg.UpdatedTime)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+func (q *Queries) GetItem(ctx context.Context, arg GetItemParams) (RepliedItem, error) {
+	row := q.db.QueryRowContext(ctx, getItem, arg.ItemType, arg.ID)
+	var i RepliedItem
+	err := row.Scan(
+		&i.ID,
+		&i.ReplyID,
+		&i.ItemType,
+		&i.UpdatedTime,
+	)
+	return i, err
+}
+
+const setReplyID = `-- name: SetReplyID :exec
+UPDATE replied_items SET reply_id = ? WHERE id = ?
+`
+
+type SetReplyIDParams struct {
+	ReplyID int64
+	ID      int64
+}
+
+func (q *Queries) SetReplyID(ctx context.Context, arg SetReplyIDParams) error {
+	_, err := q.db.ExecContext(ctx, setReplyID, arg.ReplyID, arg.ID)
+	return err
 }

@@ -8,6 +8,7 @@ import ()
 
 type RepliedItem struct {
 	ID          int64
+	ReplyID     int64
 	ItemType    string
 	UpdatedTime int64
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"text/template"
+	"time"
 
 	"github.com/Masterminds/sprig"
 	"github.com/pelletier/go-toml/v2"
@@ -29,9 +30,10 @@ type Reply struct {
 }
 
 type Config struct {
-	ConfigFile *ConfigFile
-	Regexes    map[string]*pcre.Regexp
-	Tmpls      map[string]*template.Template
+	ConfigFile   *ConfigFile
+	Regexes      map[string]*pcre.Regexp
+	Tmpls        map[string]*template.Template
+	PollInterval time.Duration
 }
 
 func loadConfig(path string) (Config, error) {
@@ -60,7 +62,7 @@ func loadConfig(path string) (Config, error) {
 		return Config{}, err
 	}
 
-	cfg := Config{cfgFile, compiledRegexes, compiledTmpls}
+	cfg := Config{cfgFile, compiledRegexes, compiledTmpls, 15 * time.Second}
 	validateConfig(cfg)
 	return cfg, nil
 }
