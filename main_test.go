@@ -89,7 +89,7 @@ func TestEdit(t *testing.T) {
 		return httpmock.NewJsonResponse(200, types.CommentResponse{})
 	})
 
-	edited := map[int]string{}
+	edited := map[float64]string{}
 
 	// Whenever the edit comment endpoint is called, add the edited comment to
 	// the edited map, so that it can be checked later
@@ -148,7 +148,7 @@ func TestEdit(t *testing.T) {
 	// Wait for the workers to stop due to context cancellation
 	wg.Wait()
 
-	expected := map[int]string{
+	expected := map[float64]string{
 		100: "Lemmy Comment!",
 		101: "Lemmy Post!",
 	}
@@ -265,7 +265,7 @@ func registerListComments(t *testing.T) {
 					Comment: types.Comment{ // Should match reply index 1
 						ID:        12,
 						Published: types.LemmyTime{Time: time.Unix(1550164620, 0)},
-						Updated:   types.LemmyTime{Time: time.Unix(1581700620, 0)},
+						Updated:   types.NewOptional(types.LemmyTime{Time: time.Unix(1581700620, 0)}),
 						Content:   "Hello, Lemmy Comment",
 					},
 					Community: types.Community{
@@ -317,7 +317,7 @@ func registerListPosts(t *testing.T) {
 					Post: types.Post{ // Should match reply index 1
 						ID:        3,
 						Published: types.LemmyTime{Time: time.Unix(1550164620, 0)},
-						Updated:   types.LemmyTime{Time: time.Unix(1581700620, 0)},
+						Updated:   types.NewOptional(types.LemmyTime{Time: time.Unix(1581700620, 0)}),
 						Body:      types.NewOptional("Hello, Lemmy Post"),
 					},
 					Community: types.Community{

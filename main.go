@@ -90,7 +90,7 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, rs *store.Q
 			comments, err := c.Comments(ctx, types.GetComments{
 				Type:  types.NewOptional(types.ListingTypeLocal),
 				Sort:  types.NewOptional(types.CommentSortTypeNew),
-				Limit: types.NewOptional[int64](50),
+				Limit: types.NewOptional[float64](50),
 			})
 			if err != nil {
 				log.Warn("Error getting comments").Err(err).Send()
@@ -116,11 +116,11 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, rs *store.Q
 				} else if err != nil {
 					log.Warn("Error checking if item exists").Err(err).Send()
 					continue
-				} else if item.UpdatedTime == c.Comment.Updated.Unix() {
+				} else if item.UpdatedTime == c.Comment.Updated.ValueOrEmpty().Unix() {
 					// If the item we're checking for exists and hasn't been edited,
 					// we've already replied, so skip it
 					continue
-				} else if item.UpdatedTime != c.Comment.Updated.Unix() {
+				} else if item.UpdatedTime != c.Comment.Updated.ValueOrEmpty().Unix() {
 					// If the item exists but has been edited since we replied,
 					// set edit to true so we know to edit it instead of making
 					// a new comment
@@ -135,7 +135,7 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, rs *store.Q
 
 					log.Info("Matched comment body").
 						Int("reply-index", i).
-						Int("comment-id", c.Comment.ID).
+						Float64("comment-id", c.Comment.ID).
 						Send()
 
 					job := replyJob{
@@ -147,7 +147,7 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, rs *store.Q
 					// so set the job's EditID so the reply worker knows which
 					// comment to edit
 					if edit {
-						job.EditID = int(item.ReplyID)
+						job.EditID = float64(item.ReplyID)
 					}
 
 					matches := re.FindAllStringSubmatch(c.Comment.Content, -1)
@@ -167,7 +167,7 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, rs *store.Q
 					err = rs.AddItem(ctx, store.AddItemParams{
 						ID:          int64(c.Comment.ID),
 						ItemType:    store.Comment,
-						UpdatedTime: c.Comment.Updated.Unix(),
+						UpdatedTime: c.Comment.Updated.ValueOrEmpty().Unix(),
 					})
 					if err != nil {
 						log.Warn("Error adding comment to the reply store").Err(err).Send()
@@ -180,7 +180,7 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, rs *store.Q
 			posts, err := c.Posts(ctx, types.GetPosts{
 				Type:  types.NewOptional(types.ListingTypeLocal),
 				Sort:  types.NewOptional(types.SortTypeNew),
-				Limit: types.NewOptional[int64](20),
+				Limit: types.NewOptional[float64](20),
 			})
 			if err != nil {
 				log.Warn("Error getting comments").Err(err).Send()
@@ -206,11 +206,11 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, rs *store.Q
 				} else if err != nil {
 					log.Warn("Error checking if item exists").Err(err).Send()
 					continue
-				} else if item.UpdatedTime == p.Post.Updated.Unix() {
+				} else if item.UpdatedTime == p.Post.Updated.ValueOrEmpty().Unix() {
 					// If the item we're checking for exists and hasn't been edited,
 					// we've already replied, so skip it
 					continue
-				} else if item.UpdatedTime != p.Post.Updated.Unix() {
+				} else if item.UpdatedTime != p.Post.Updated.ValueOrEmpty().Unix() {
 					// If the item exists but has been edited since we replied,
 					// set edit to true so we know to edit it instead of making
 					// a new comment
@@ -226,7 +226,7 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, rs *store.Q
 
 					log.Info("Matched post body").
 						Int("reply-index", i).
-						Int("post-id", p.Post.ID).
+						Float64("post-id", p.Post.ID).
 						Send()
 
 					job := replyJob{PostID: p.Post.ID}
@@ -235,7 +235,7 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, rs *store.Q
 					// so set the job's EditID so the reply worker knows which
 					// comment to edit
 					if edit {
-						job.EditID = int(item.ReplyID)
+						job.EditID = float64(item.ReplyID)
 					}
 
 					matches := re.FindAllStringSubmatch(body, -1)
@@ -255,7 +255,7 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, rs *store.Q
 					err = rs.AddItem(ctx, store.AddItemParams{
 						ID:          int64(p.Post.ID),
 						ItemType:    store.Post,
-						UpdatedTime: p.Post.Updated.Unix(),
+						UpdatedTime: p.Post.Updated.ValueOrEmpty().Unix(),
 					})
 					if err != nil {
 						log.Warn("Error adding post to the reply store").Err(err).Send()
@@ -271,9 +271,9 @@ func commentWorker(ctx context.Context, c *lemmy.Client, cfg Config, rs *store.Q
 
 type replyJob struct {
 	Content   string
-	CommentID types.Optional[int]
-	EditID    int
-	PostID    int
+	CommentID types.Optional[float64]
+	EditID    float64
+	PostID    float64
 }
 
 func commentReplyWorker(ctx context.Context, c *lemmy.Client, rs *store.Queries, ch <-chan replyJob) {
@@ -302,7 +302,7 @@ func commentReplyWorker(ctx context.Context, c *lemmy.Client, rs *store.Queries,
 				}
 
 				log.Info("Edited comment").
-					Int("comment-id", cr.CommentView.Comment.ID).
+					Float64("comment-id", cr.CommentView.Comment.ID).
 					Send()
 			} else {
 				// Create a new comment replying to a post/comment
@@ -326,9 +326,9 @@ func commentReplyWorker(ctx context.Context, c *lemmy.Client, rs *store.Queries,
 				}
 
 				log.Info("Created new comment").
-					Int("post-id", reply.PostID).
-					Int("parent-id", reply.CommentID.ValueOr(-1)).
-					Int("comment-id", cr.CommentView.Comment.ID).
+					Float64("post-id", reply.PostID).
+					Float64("parent-id", reply.CommentID.ValueOr(-1)).
+					Float64("comment-id", cr.CommentView.Comment.ID).
 					Send()
 			}
 		case <-ctx.Done():

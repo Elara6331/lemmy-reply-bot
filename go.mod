@@ -9,7 +9,7 @@ require (
 	github.com/jarcoal/httpmock v1.3.1
 	github.com/pelletier/go-toml/v2 v2.0.6
 	github.com/spf13/pflag v1.0.5
-	go.elara.ws/go-lemmy v0.18.1-0.20230902225105-9f4bae88f2fe
+	go.elara.ws/go-lemmy v0.18.1-0.20230925023946-7e4c13d03170
 	go.elara.ws/logger v0.0.0-20230421022458-e80700db2090
 	go.elara.ws/pcre v0.0.0-20230805032557-4ce849193f64
 	modernc.org/sqlite v1.25.0
