@@ -289,6 +289,7 @@ func commentReplyWorker(ctx context.Context, c *lemmy.Client, rs *store.Queries,
 				})
 				if err != nil {
 					log.Warn("Error while trying to edit comment").Err(err).Send()
+					return
 				}
 
 				// Set the reply ID for the post/comment in the database
@@ -299,6 +300,7 @@ func commentReplyWorker(ctx context.Context, c *lemmy.Client, rs *store.Queries,
 				})
 				if err != nil {
 					log.Warn("Error setting the reply ID of the new comment").Err(err).Send()
+					return
 				}
 
 				log.Info("Edited comment").
@@ -313,6 +315,7 @@ func commentReplyWorker(ctx context.Context, c *lemmy.Client, rs *store.Queries,
 				})
 				if err != nil {
 					log.Warn("Error while trying to create new comment").Err(err).Send()
+					return
 				}
 
 				// Set the reply ID for the post/comment in the database
@@ -323,6 +326,7 @@ func commentReplyWorker(ctx context.Context, c *lemmy.Client, rs *store.Queries,
 				})
 				if err != nil {
 					log.Warn("Error setting the reply ID of the new comment").Err(err).Send()
+					return
 				}
 
 				log.Info("Created new comment").
