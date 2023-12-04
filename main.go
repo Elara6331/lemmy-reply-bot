@@ -37,6 +37,7 @@ func openDB(path string) (*sql.DB, error) {
 
 func main() {
 	configPath := pflag.StringP("config", "c", "./lemmy-reply-bot.toml", "Path to the config file")
+	dbPath := pflag.StringP("db-path", "d", "./replied.db", "Path to the database")
 	dryRun := pflag.BoolP("dry-run", "D", false, "Don't actually send comments, just check for matches")
 	pflag.Parse()
 
@@ -49,7 +50,7 @@ func main() {
 		log.Fatal("Error loading config file").Err(err).Send()
 	}
 
-	db, err := openDB("replied.db")
+	db, err := openDB(*dbPath)
 	if err != nil {
 		log.Fatal("Error opening reply database").Err(err).Send()
 	}
