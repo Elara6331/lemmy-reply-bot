@@ -1,0 +1,54 @@
+[lemmy]
+instance_url = "https://lemmy.ml"
+poll_interval = "10s"
+
+[lemmy.account]
+user_or_email = "user@example.com"
+password = "ExamplePassword123"
+
+# Replies to any message starting with "!!BOT_TEST", with some information
+# about what it's replying to
+#
+# Example: !!BOT_TEST Hello :3
+[[reply]]
+regex = "!!BOT_TEST (.+)"
+template = '''
+ID: #(id) \
+Type: #(type) \
+Content: #(matches[0][1])
+'''
+
+
+# Returns archive links for URLs preceded with "!archive"
+#
+# Example: !archive https://gitea.elara.ws/Elara6331/lemmy-reply-bot
+[[reply]]
+regex = '!archive (https?)://([.\w\d]+\.[\w\d]{2,4}[\w\d?&=%/.-]*)'
+msg = '''
+Here are the archive links you requested:
+
+#for(i, match in matches):
+#if(len(matches) > 1):Link #(i+1):#!if
+- [archive.vn](https://archive.vn/#(match[1])://#(match[2]))
+- [archive.org](https://web.archive.org/web/#(match[1])://#(match[2]))
+- [ghostarchive.org](https://ghostarchive.org/search?term=#(match[1])://#(match[2]))
+
+#!for
+'''
+
+# Returns invidious links for YouTube URLs
+#
+# Example: https://www.youtube.com/watch?v=2vPhySbRETM
+[[reply]]
+regex = 'https?://(?:(?:www|m)\.)?youtu(?:\.be/|be\.com/(?:watch\?v=|shorts/))([\w\d-]{11})[&?]?([\w\d?&=%/-]*)'
+msg = '''
+#(len(matches) == 1 ? "A YouTube link was" : "YouTube links were") detected in your #(type). Here are links to the same #(len(matches) == 1 ? "video" : "videos") on Invidious, which is a YouTube frontend that protects your privacy:
+
+#for(i, match in matches):
+#if(len(matches) > 1):Link #(i+1):#!if
+- [yewtu.be](https://yewtu.be/watch?v=$(match[1])&#(match[2]))
+- [invidious.weblibre.org](https://invidious.weblibre.org/watch?v=#(match[1])&#(match[2]))
+- [inv.vern.cc](https://inv.vern.cc/watch?v=#(match[1])&#(match[2]))
+
+#!for
+'''
